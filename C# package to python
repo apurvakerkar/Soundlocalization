@@ -1,0 +1,39 @@
+using System;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+
+class ViveTrackerServer
+{
+    static void Main()
+    {
+        TcpListener server = new TcpListener(IPAddress.Parse("127.0.0.1"), 12345);
+        server.Start();
+
+        Console.WriteLine("Server is listening...");
+
+        TcpClient client = server.AcceptTcpClient();
+        NetworkStream stream = client.GetStream();
+
+        // Example: Assuming you have a function to get Vive Tracker coordinates
+        string coordinates = GetViveTrackerCoordinates();
+
+        // Send the coordinates to the Python application
+        byte[] data = Encoding.UTF8.GetBytes(coordinates);
+        stream.Write(data, 0, data.Length);
+
+        Console.WriteLine("Coordinates sent: " + coordinates);
+
+        stream.Close();
+        client.Close();
+        server.Stop();
+    }
+
+    static string GetViveTrackerCoordinates()
+    {
+        // Replace this with your actual code to get Vive Tracker coordinates
+        // For example, you might use a library or API to get the tracker data.
+        // This is a placeholder function.
+        return "X: 1.23, Y: 4.56, Z: 7.89";
+    }
+}
