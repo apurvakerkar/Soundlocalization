@@ -1,0 +1,106 @@
+import numpy as np
+import librosa
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Configurable parameters
+SOUND_SPEED = 343.0 # Speed of sound in air (m/s)
+MIC_POSITIONS = np.array([ # Microphone positions (x, y, z in meters)
+  [0, 0, 0], [40, 0, 0], [20, 34.64, 0], [-20, 34.64, 0],
+  [-40, 0, 0], [-20, -34.64, 0], [20, -34.64, 0]
+])
+
+def load_audio_file(file_path):
+  """Load an audio file and return its signal and sample rate."""
+  try:
+    signals, sr = librosa.load(file_path, sr=None, mono=False)
+    return signals.T if signals.shape[0] > signals.shape[1] else signals, sr
+  except Exception as e:
+    raise ValueError(f"Failed to load audio file: {e}")
+
+def phat_weights(mic_positions):
+  """Compute PHAT weights for an array of microphone positions."""
+  num_mics = len(mic_positions)
+  weights = np.ones((num_mics, num_mics), dtype=complex)
+  for i in range(num_mics):
+    for j in range(i + 1, num_mics):
+      distance = np.linalg.norm(mic_positions[i] - mic_positions[j])
+      phase_difference = 2 * np.pi * distance / SOUND_SPEED
+      weights[i, j] = np.exp(-1j * phase_difference)
+      weights[j, i] = np.conj(weights[i, j])
+  return weights
+
+def estimate_snr(signal, noise_floor=1e-3):
+  """Estimate the Signal-to-Noise Ratio (SNR) of a signal."""
+  signal_power = np.mean(signal ** 2)
+  noise_power = max(np.var(signal), noise_floor) # Prevent division by zero
+  return 10 * np.log10(signal_power / noise_power)
+
+def find_least_noisy_channel(signals):
+  """Identify the least noisy channel based on SNR."""
+  snrs = [estimate_snr(signal) for signal in signals]
+  return np.argmax(snrs)
+
+def estimate_tdoas(signals, weights):
+  """Estimate Time Differences of Arrival (TDOAs) using the least noisy channel."""
+  ref_channel = find_least_noisy_channel(signals)
+  num_mics = signals.shape[0]
+  tdoas = np.zeros(num_mics)
+  for i in range(num_mics):
+    if i != ref_channel:
+      cc = cross_correlation_using_phat(signals[ref_channel], signals[i], weights[ref_channel, i])
+      tdoas[i] = np.argmax(cc) / float(len(signals[ref_channel]))
+  return tdoas, ref_channel
+
+def triangulate_sound_source(tdoas, mic_positions, ref_channel):
+  """Determine the sound source location using triangulation."""
+  def cost_function(source_loc):
+    estimated_dists = np.sqrt(np.sum((mic_positions - source_loc) ** 2, axis=1))
+    return np.sum((estimated_dists - tdoas * SOUND_SPEED) ** 2)
+  initial_guess = mic_positions[ref_channel]
+  result = minimize(cost_function, initial_guess, method='L-BFGS-B')
+  return result.x if result.success else None
+
+def calculate_3d_angle(source_location, mic_positions):
+    """Calculate the 3D angles (in degrees) from Mic 0 to the source location in x, y, z directions."""
+    # Reference point is the first microphone position
+    ref_point = mic_positions[0]
+
+    # Direction vector from the reference microphone to the source location
+    dir_vector = np.array(source_location) - np.array(ref_point)
+    norm_dir_vector = dir_vector / np.linalg.norm(dir_vector)
+
+    # Unit vectors for the x, y, and z axes
+    unit_vectors = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+    # Calculate the angle between the direction vector and each of the unit vectors
+    angles_rad = np.arccos(np.dot(unit_vectors, norm_dir_vector))
+    angle = np.degrees(angles_rad)
+
+    return angle
+
+def plot_positions(mic_positions, source_location):
+  """Visualize microphone and source positions in a 3D plot."""
+  fig = plt.figure()
+  ax = fig.add_subplot(111, projection='3d')
+  ax.scatter(mic_positions[:, 0], mic_positions[:, 1], mic_positions[:, 2], c='blue', marker='o', label='Mics')
+  if source_location is not None:
+    ax.scatter(*source_location, c='red', marker='^', label='Source')
+    ax.plot([mic_positions[0][0], source_location[0]], [mic_positions[0][1], source_location[1]],
+        [mic_positions[0][2], source_location[2]], 'r--', label='Source Direction')
+  ax.set_xlabel('X Position (m)'); ax.set_ylabel('Y Position (m)'); ax.set_zlabel('Z Position (m)')
+  plt.legend(); plt.show()
+
+
+# Main execution
+if __name__ == "__main__":
+  audio_file_path = "C:/Users/apurv/Desktop/12.03.2024/audio_recording3.wav" # Replace with your actual file path
+  signals, sr = load_audio_file(audio_file_path)
+  weights = phat_weights(MIC_POSITIONS)
+  tdoas, ref_channel = estimate_tdoas(signals, weights)
+  estimated_location = triangulate_sound_source(tdoas, MIC_POSITIONS, ref_channel)
+  plot_positions(MIC_POSITIONS, estimated_location)
+  if estimated_location is not None:
+    angle = calculate_3d_angle(estimated_location, MIC_POSITIONS)
+    print(f"Angle of source: {angle} ")
